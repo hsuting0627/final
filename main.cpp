@@ -1,11 +1,40 @@
     #include "mbed.h"
     #include "bbcar.h"
+#include "drivers/DigitalOut.h"
+    
+#include "erpc_simple_server.h"
+#include "erpc_basic_codec.h"
+#include "erpc_crc16.h"
+#include "UARTTransport.h"
+#include "DynamicMessageBufferFactory.h"
+#include "blink_led_server.h"
+/**
+ * Macros for setting console flow control.
+ */
+#define CONSOLE_FLOWCONTROL_RTS     1
+#define CONSOLE_FLOWCONTROL_CTS     2
+#define CONSOLE_FLOWCONTROL_RTSCTS  3
+#define mbed_console_concat_(x) CONSOLE_FLOWCONTROL_##x
+#define mbed_console_concat(x) mbed_console_concat_(x)
+#define CONSOLE_FLOWCONTROL mbed_console_concat(MBED_CONF_TARGET_CONSOLE_UART_FLOW_CONTROL)
+
+/** erpc infrastructure */
+ep::UARTTransport uart_transport(D1, D0, 9600);
+ep::DynamicMessageBufferFactory dynamic_mbf;
+erpc::BasicCodecFactory basic_cf;
+erpc::Crc16 crc16;
+erpc::SimpleServer rpc_server;
+
+/** LED service */
+LEDBlinkService_service led_service;
+
+
+
 
     #define velocity 60
     #define CENTER_BASE 1500
 
-    //BufferedSerial pc(USBTX, USBRX);
-    BufferedSerial serdev(D1, D0, 9600);
+    //BufferedSerial serdev(D1, D0, 9600);
 
     Ticker servo_ticker;
     Ticker encoder_ticker;
@@ -14,6 +43,7 @@
     Thread Distance;
     Thread PING;
 
+    Thread eRPC;
     PwmOut pin5(D10), pin6(D11);
     DigitalIn encoder(D3); // encoder
     DigitalInOut pin10(D9); // ping 
@@ -35,7 +65,26 @@
     // Branch
     int right_turn = 0;
     int left_turn = 0;
+    bool erpc_check = 0;
 
+    int get_speed(){
+        float init;
+        float fin;
+        int speed;
+        init = steps * 6.5 * 3.14 / 32;
+        ThisThread::sleep_for(100ms);
+        fin = steps * 6.5 * 3.14 / 32;
+        speed = (fin - init) * 10;
+        return speed;
+    }
+
+    mbed::DigitalOut led3(LED3, 1);
+    mbed::DigitalOut* leds[] = { &led3 };
+    void led_on(uint8_t led) {
+        erpc_check = 1;
+    }
+    void led_off(uint8_t led) {
+    }
     // QTI Sensing System in thread
     void qti_sensing(){
         while (true) {
@@ -81,17 +130,6 @@
         int value = encoder;
         if (!last && value) steps++;
         last = value;
-    }
-
-    int get_speed(){
-        float init;
-        float fin;
-        int speed;
-        init = steps * 6.5 * 3.14 / 32;
-        ThisThread::sleep_for(100ms);
-        fin = steps * 6.5 * 3.14 / 32;
-        speed = (fin - init) * 10;
-        return speed;
     }
 
     // Servo Control System
@@ -188,13 +226,39 @@
             }
         }
     }
-
+    void erpc_server()
+    {
+        rpc_server.run();
+    }
     // main() runs in its own thread in the OS
     int main()
     {
         int dist;
         int speed_test;
         char instr[32];
+        uart_transport.setCrc16(&crc16);
+
+	// Set up hardware flow control, if needed
+#if CONSOLE_FLOWCONTROL == CONSOLE_FLOWCONTROL_RTS
+	uart_transport.set_flow_control(mbed::SerialBase::RTS, STDIO_UART_RTS, NC);
+#elif CONSOLE_FLOWCONTROL == CONSOLE_FLOWCONTROL_CTS
+	uart_transport.set_flow_control(mbed::SerialBase::CTS, NC, STDIO_UART_CTS);
+#elif CONSOLE_FLOWCONTROL == CONSOLE_FLOWCONTROL_RTSCTS
+	uart_transport.set_flow_control(mbed::SerialBase::RTSCTS, STDIO_UART_RTS, STDIO_UART_CTS);
+#endif
+	
+    printf("Initializing server.\n");
+	rpc_server.setTransport(&uart_transport);
+	rpc_server.setCodecFactory(&basic_cf);
+	rpc_server.setMessageBufferFactory(&dynamic_mbf);
+
+	// Add the led service to the server
+        printf("Adding LED server.\n");
+	    rpc_server.addService(&led_service);
+
+	// Run the server. This should never exit
+        printf("Running server.\n");
+	    eRPC.start(erpc_server);   
 
         encoder_ticker.attach(&encoder_control, 10ms);
         qti.start(qti_sensing);
@@ -202,17 +266,24 @@
         PING.start(ping);
         memset(instr, '\0', 32); //clear buffer
         while(1){
-            dist = steps * 6.5 * 3.14 / 32 ;
-            sprintf(instr, "Distance traveled : %d cm\n", dist);
-            serdev.write(instr, strlen(instr));
-            ThisThread::sleep_for(1s);
-            memset(instr, '\0', 32);
+            printf("while \n");
+            if(erpc_check == 1){
+                eRPC.terminate();
+                while(1){
+                    printf("success erpc");
+                    dist = steps * 6.5 * 3.14 / 32 ;
+                    sprintf(instr, "Distance traveled : %d cm\n", dist);
+                    uart_transport.write(instr, strlen(instr));
+                    ThisThread::sleep_for(1s);
+                    memset(instr, '\0', 32);
 
-            speed_test = get_speed();
-            sprintf(instr, "Current speed : %d cm\n", speed_test);
-            serdev.write(instr, strlen(instr));
-            ThisThread::sleep_for(1s);
-            memset(instr, '\0', 32);
+                    speed_test = get_speed();
+                    sprintf(instr, "Current speed : %d cm\n", speed_test);
+                    uart_transport.write(instr, strlen(instr));
+                    ThisThread::sleep_for(1s);
+                    memset(instr, '\0', 32);
+                }
+            }
         }
     }
 
