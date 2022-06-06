@@ -25,5 +25,6 @@ XBee	D1, D0, 9600
 QTI Sensor	D4, D5, D6, D7
 
 步驟：
-
+python : led_test_client.py
+py led_test_client.py COM3
 使用eRPC開始自走車，開始後即會回傳資料(速度、已行走距離)
