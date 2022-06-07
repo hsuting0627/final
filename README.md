@@ -1,5 +1,6 @@
 # final
-
+My code download:  
+https://drive.google.com/file/d/1U1aQzE8mom6O4qhhBQPVqsas9JMpjEMr/view  
 壹、	簡介
 本次期末專題是設計一台能夠跟隨提前繪製好之黑線地圖之自走車，加上一整學期以來學習的各項電子零件，組合馬達零件Servo、測距離零件 Ping、無線控制零件XBee、輪速偵測光圈零件Optical Encoder、偵測黑線零件QTI Sensor。  
 貳、	零件  
